@@ -1,0 +1,185 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {        
+        "VnetSettings":{
+            "value": {
+                "name":"ColumbiaVnet",
+                "addressPrefix": "10.10.0.0/16",
+                "deployGateway": false,
+                "gatewayName": "VpnGateway1",
+                "gatewaySku": "VpnGw2",
+                "gatewaysubnet": {                        
+                        "addressPrefix": "10.10.0.0/24"                        
+                },
+                "clientsubnet" :{
+                        "name": "ClientSubnet",
+                        "addressPrefix": "10.10.1.0/24"                        
+                },
+                "appsubnet": {
+                        "name": "AppSubnet",
+                        "addressPrefix": "10.10.2.0/24"                        
+                },
+                "datasubnet": {
+                        "name": "DataSubnet",
+                        "addressPrefix": "10.10.3.0/24"                        
+                },                
+                "storagesubnet": {
+                        "name": "StorageSubnet",
+                        "addressPrefix": "10.10.4.0/24"                        
+                }                
+            }
+        },
+        "adminusername" : {
+            "value": "superadmin"
+        },
+        "adminpassword": {
+            "value": "p@ssw0rd369"
+        },        
+        "VirtualMachines": {
+            "value" : [
+            {
+                "name": "workstation1-vm",
+                "subnet": "clientsubnet",
+                "size": "Standard_D2s_v3",
+                "image": "WindowsServer2016-DataCenter",
+                "datadisk": {
+                    "name": "ws1-disk",
+                    "sizegb": 128,
+                    "sku": "Premium_LRS"
+                }
+            },
+            {
+                "name": "workstation2-vm",
+                "subnet": "clientsubnet",
+                "size": "Standard_D2s_v3",                
+                "image": "WindowsServer2016-DataCenter",
+                "datadisk": {
+                    "name": "ws2-disk",
+                    "sizegb": 128,
+                    "sku": "Premium_LRS"
+                }
+            },
+            {
+                "name": "workstation3-vm",
+                "subnet": "clientsubnet",
+                "size": "Standard_D2s_v3",                
+                "image": "WindowsServer2016-DataCenter",
+                "datadisk":  {
+                    "name": "ws3-disk",
+                    "sizegb": 128,
+                    "sku": "Premium_LRS"
+                }
+            },
+            {
+                "name": "workstation4-vm",
+                "subnet": "clientsubnet",
+                "size": "Standard_D2s_v3",                
+                "image": "WindowsServer2016-DataCenter",
+                "datadisk": {
+                    "name": "ws4-disk",
+                    "sizegb": 128,
+                    "sku": "Premium_LRS"
+                }
+            },
+            {
+                "name": "esri-gis-vm",
+                "subnet": "clientsubnet",
+                "size": "Standard_D2s_v3",                
+                "image": "WindowsServer2016-DataCenter",
+                "datadisk": {
+                    "name": "esri-gis-disk",
+                    "sizegb": 128,
+                    "sku": "Premium_LRS"
+                }
+            },
+            {
+                "name": "portal-vm",
+                "subnet": "appsubnet",
+                "size": "Standard_D2s_v3",                
+                "image": "WindowsServer2016-DataCenter",
+                "datadisk": {
+                    "name": "portal-data-disk",
+                    "sizegb": 128,
+                    "sku": "Premium_LRS"
+                }
+            },
+            {
+                "name": "dataservice-vm",
+                "subnet": "datasubnet",
+                "size": "Standard_D2s_v3",
+                "image": "WindowsServer2016-DataCenter",
+                "datadisk": {
+                    "name": "svc-data-disk",
+                    "sizegb": 128,
+                    "sku": "Premium_LRS"
+                }
+            },                       
+            {
+                "name": "infstw-vm",
+                "subnet": "datasubnet",
+                "size": "Standard_D2s_v3",                
+                "image": "WindowsServer2016-DataCenter",
+                "datadisk": {
+                    "name": "infstw-data-disk",
+                    "sizegb": 128,
+                    "sku": "Premium_LRS"
+                }
+            }                
+        ]
+        },
+        "HanaVM" : {
+            "value":  {
+                "name": "hana-vm",
+                "subnet": "datasubnet",
+                "size": "Standard_E16s_v3",               
+                "image": "SUSE-SAP-HANA",
+                "datadisks": [
+                    {
+                        "name": "hana-data-disk",
+                        "sizegb": 512,
+                        "sku": "Premium_LRS"
+                    },
+                    {
+                        "name": "hana-log-disk",
+                        "sizegb": 512,
+                        "sku": "Premium_LRS"
+                    },
+                    {
+                        "name": "hana-shared-disk",
+                        "sizegb": 512,
+                        "sku": "Premium_LRS"
+                    },
+                    {
+                        "name": "hana-usrsap-disk",
+                        "sizegb": 64,
+                        "sku": "Premium_LRS"
+                    },
+                    {
+                        "name": "hana-media-disk",
+                        "sizegb": 32,
+                        "sku": "Premium_LRS"
+                    },
+                    {
+                        "name": "hana-root-disk",
+                        "sizegb": 64,
+                        "sku": "Premium_LRS"
+                    }
+                    ]
+            }
+        },
+        "OnPremSettings":{
+            "value":{
+                "addressPrefix": "10.0.0.0/16",                
+                "gatewayIpAddress" : "1.2.3.4",
+                "sharedKey": "abcdef3690830xsn0tur"
+            }
+        },
+        "StorageSettings":{
+            "value": {
+                "accountName": "columbiastorage05",                
+                "fileShareName": "azfiles"
+            }
+        }
+    }
+}

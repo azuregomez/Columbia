@@ -1,0 +1,544 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {    
+      "VnetSettings":{"type":"object"},
+      "OnPremSettings":{"type":"object"}, 
+      "StorageSettings":{"type":"object"},       
+      "VirtualMachines": { "type": "array" },
+      "HanaVM":{ "type": "object" },
+      "adminusername" : { "type": "string"},
+      "adminpassword" : { "type": "string"}      
+    },
+    "variables": {
+      "gatewayPublicIpName" : "[concat(parameters('VnetSettings').name, '-gwy-ip')]",
+      "localGatewayName": "[concat(parameters('VnetSettings').name, '-LocalGateway')]",
+      "gatewaySubnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('VnetSettings').name, 'GatewaySubnet')]",  
+      "gatewayConnectionName": "[concat(parameters('VnetSettings').name, '-Gwy-Connection')]",
+      "clientSubnetNSGName" : "[concat(parameters('VnetSettings').clientsubnet.name, '-nsg')]",
+      "dataSubnetNSGName" : "[concat(parameters('VnetSettings').datasubnet.name, '-nsg')]",
+      "appSubnetNSGName" : "[concat(parameters('VnetSettings').appsubnet.name, '-nsg')]",
+      "storageSubnetNSGName" : "[concat(parameters('VnetSettings').storagesubnet.name, '-nsg')]",
+      "windowsConfiguration": {
+        "provisionVmAgent": "true"
+      },
+      "imageReference": {
+        "SUSE-SAP-HANA": {
+            "publisher": "SUSE",
+            "offer": "SLES-SAP",
+            "sku": "12-SP3",
+            "version": "latest"
+        },
+        "WindowsServer2016-DataCenter": {
+            "publisher": "MicrosoftWindowsServer",
+            "offer": "WindowsServer",
+            "sku": "2016-Datacenter",
+            "version": "latest"
+        }
+      }
+    },    
+    "resources": [
+         {
+            "condition": "[parameters('VnetSettings').deployGateway]",
+            "comments": "Gateway PIP",
+            "apiVersion": "2018-07-01",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "name": "[variables('gatewayPublicIpName')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+              "publicIPAllocationMethod": "Dynamic"
+            }
+        },
+        {
+          "condition": "[parameters('VnetSettings').deployGateway]",
+          "comments": "OnPrem Local Gateway",
+          "apiVersion": "2019-04-01",
+          "type": "Microsoft.Network/localNetworkGateways",
+          "name": "[variables('localGatewayName')]",
+          "location": "[resourceGroup().location]",         
+          "properties": {
+            "localNetworkAddressSpace": {
+              "addressPrefixes": [
+                "[parameters('OnPremSettings').addressPrefix]"
+              ]
+            },
+            "gatewayIpAddress":  "[parameters('OnPremSettings').gatewayIpAddress]"
+          }
+        },
+        {
+            "condition": "[parameters('VnetSettings').deployGateway]",
+            "comments": "VPN Gateway",
+            "apiVersion": "2019-04-01",
+            "type": "Microsoft.Network/virtualNetworkGateways",
+            "name": "[parameters('VnetSettings').gatewayName]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+              "[concat('Microsoft.Network/publicIPAddresses/', variables('gatewayPublicIPName'))]",
+              "[concat('Microsoft.Network/virtualNetworks/', parameters('VnetSettings').name)]"
+            ],
+            "properties": {
+              "ipConfigurations": [
+                {
+                  "properties": {
+                    "privateIPAllocationMethod": "Dynamic",
+                    "subnet": {
+                      "id": "[variables('gatewaySubnetRef')]"
+                    },
+                    "publicIPAddress": {
+                      "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('gatewayPublicIPName'))]"
+                    }
+                  },
+                  "name": "vnetGatewayConfig"
+                }
+              ],
+              "sku": {
+                "name": "[parameters('VnetSettings').gatewaySku]",
+                "tier": "[parameters('VnetSettings').gatewaySku]"
+              },
+              "gatewayType": "Vpn",
+              "vpnType": "RouteBased",
+              "enableBgp": true
+            }
+        },
+        {
+          "condition": "[parameters('VnetSettings').deployGateway]",
+          "apiVersion": "2018-07-01",
+          "name": "[variables('gatewayConnectionName')]",
+          "type": "Microsoft.Network/connections",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[concat('Microsoft.Network/virtualNetworkGateways/', parameters('VnetSettings').gatewayName)]",
+            "[concat('Microsoft.Network/localNetworkGateways/', variables('localGatewayName'))]"
+          ],
+          "properties": {
+            "virtualNetworkGateway1": {
+              "id": "[resourceId('Microsoft.Network/virtualNetworkGateways', parameters('VnetSettings').gatewayName)]"
+            },
+            "localNetworkGateway2": {
+              "id": "[resourceId('Microsoft.Network/localNetworkGateways', variables('localGatewayName'))]"
+            },
+            "connectionType": "IPsec",
+            "routingWeight": 10,
+            "sharedKey":  "[parameters('OnPremSettings').sharedKey]"
+          }
+        },         
+        {
+            "comments": "Client Subnet NSG",
+            "apiVersion": "2019-12-01",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[variables('clientSubnetNSGName')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "securityRules": [
+                {
+                    "name": "inbound-onprem-dmz",
+                    "properties": {
+                        "description": "Rule",
+                        "protocol": "Tcp",
+                        "sourcePortRange": "*",
+                        "destinationPortRange": "6443",
+                        "sourceAddressPrefix": "[parameters('OnPremSettings').addressPrefix]",
+                        "destinationAddressPrefix": "*",
+                        "access": "Allow",
+                        "priority": 100,
+                        "direction": "Inbound"
+                    }
+                },  
+                {
+                    "name": "inbound-rdp",
+                    "properties": {
+                        "description": "Rule",
+                        "protocol": "Tcp",
+                        "sourcePortRange": "*",
+                        "destinationPortRange": "3389",
+                        "sourceAddressPrefix": "*",
+                        "destinationAddressPrefix": "*",
+                        "access": "Allow",
+                        "priority": 200,
+                        "direction": "Inbound"
+                    }
+                }]
+            }
+        },
+        {
+            "comments": "App Subnet NSG",
+            "apiVersion": "2019-12-01",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[variables('appSubnetNSGName')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "securityRules": [
+                {
+                    "name": "inbound-onprem-dmz",
+                    "properties": {
+                        "description": "Rule",
+                        "protocol": "Tcp",
+                        "sourcePortRange": "*",
+                        "destinationPortRange": "7443",
+                        "sourceAddressPrefix": "[parameters('OnPremSettings').addressPrefix]",
+                        "destinationAddressPrefix": "*",
+                        "access": "Allow",
+                        "priority": 100,
+                        "direction": "Inbound"
+                    }
+                },  
+                {
+                    "name": "inbound-rdp",
+                    "properties": {
+                        "description": "Rule",
+                        "protocol": "Tcp",
+                        "sourcePortRange": "*",
+                        "destinationPortRange": "3389",
+                        "sourceAddressPrefix": "*",
+                        "destinationAddressPrefix": "*",
+                        "access": "Allow",
+                        "priority": 200,
+                        "direction": "Inbound"
+                    }
+                }]
+            }
+        },
+        {
+            "comments": "Data Subnet NSG",
+            "apiVersion": "2019-12-01",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[variables('dataSubnetNSGName')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "securityRules": [
+                {
+                    "name": "inbound-onprem-fme2hana",
+                    "properties": {
+                        "description": "Rule",
+                        "protocol": "Tcp",
+                        "sourcePortRange": "*",
+                        "destinationPortRanges": ["30013","30015","30040","30041","30042","8000"],
+                        "sourceAddressPrefix": "[parameters('OnPremSettings').addressPrefix]",
+                        "destinationAddressPrefix": "*",
+                        "access": "Allow",
+                        "priority": 100,
+                        "direction": "Inbound"
+                    }
+                }, 
+                {
+                    "name": "inbound-clientsubnet-saphana",
+                    "properties": {
+                        "description": "Rule",
+                        "protocol": "Tcp",
+                        "sourcePortRange": "*",
+                        "destinationPortRanges": ["30013","30015","30040","30041","30042","8000"],
+                        "sourceAddressPrefix": "[parameters('VnetSettings').clientsubnet.addressPrefix]",
+                        "destinationAddressPrefix": "*",
+                        "access": "Allow",
+                        "priority": 200,
+                        "direction": "Inbound"
+                    }
+                }, 
+                {
+                    "name": "inbound-rdp",
+                    "properties": {
+                        "description": "Rule",
+                        "protocol": "Tcp",
+                        "sourcePortRange": "*",
+                        "destinationPortRanges": ["22","3389"],
+                        "sourceAddressPrefix": "*",
+                        "destinationAddressPrefix": "*",
+                        "access": "Allow",
+                        "priority": 300,
+                        "direction": "Inbound"
+                    }
+                }]
+            }
+        },
+        {
+            "comments": "Storage Subnet NSG",
+            "apiVersion": "2019-12-01",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[variables('storageSubnetNSGName')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "securityRules": [
+                {
+                    "name": "inbound-onprem",
+                    "properties": {
+                        "description": "Rule",
+                        "protocol": "Tcp",
+                        "sourcePortRange": "*",
+                        "destinationPortRanges": ["443","445"],
+                        "sourceAddressPrefix": "[parameters('OnPremSettings').addressPrefix]",
+                        "destinationAddressPrefix": "*",
+                        "access": "Allow",
+                        "priority": 100,
+                        "direction": "Inbound"
+                    }
+                }, 
+                {
+                    "name": "inbound-clientsubnet",
+                    "properties": {
+                        "description": "Rule",
+                        "protocol": "Tcp",
+                        "sourcePortRange": "*",
+                        "destinationPortRanges": ["443","445"],
+                        "sourceAddressPrefix": "[parameters('VnetSettings').clientsubnet.addressPrefix]",
+                        "destinationAddressPrefix": "*",
+                        "access": "Allow",
+                        "priority": 200,
+                        "direction": "Inbound"
+                    }
+                }, 
+                {
+                    "name": "inbound-datasubnet",
+                    "properties": {
+                        "description": "Rule",
+                        "protocol": "Tcp",
+                        "sourcePortRange": "*",
+                        "destinationPortRanges": ["443","445"],
+                        "sourceAddressPrefix": "[parameters('VnetSettings').datasubnet.addressPrefix]",
+                        "destinationAddressPrefix": "*",
+                        "access": "Allow",
+                        "priority": 300,
+                        "direction": "Inbound"
+                    }
+                }]
+            }
+        },
+        {
+            "comments": "VNet",
+            "apiVersion": "2019-12-01",
+            "type": "Microsoft.Network/virtualNetworks",
+            "name": "[parameters('VnetSettings').name]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [                
+                "[concat('Microsoft.Network/networkSecurityGroups/', variables('clientSubnetNSGName'))]",
+                "[concat('Microsoft.Network/networkSecurityGroups/', variables('appSubnetNSGName'))]",
+                "[concat('Microsoft.Network/networkSecurityGroups/', variables('dataSubnetNSGName'))]",
+                "[concat('Microsoft.Network/networkSecurityGroups/', variables('storageSubnetNSGName'))]"
+            ],
+            "properties": {
+            "addressSpace": {
+                "addressPrefixes": [
+                "[parameters('VnetSettings').addressPrefix]"
+                ]
+            },
+            "subnets": [
+                {
+                "name": "GatewaySubnet",
+                "properties": {
+                    "addressPrefix": "[parameters('VnetSettings').gatewaysubnet.addressPrefix]"                 
+                    }
+                },
+                {
+                "name": "[parameters('VnetSettings').clientsubnet.name]",
+                "properties": {
+                    "addressPrefix": "[parameters('VnetSettings').clientsubnet.addressPrefix]",
+                    "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('clientSubnetNSGName'))]"
+                        }
+                    }
+                },
+                {
+                "name": "[parameters('VnetSettings').appsubnet.name]",
+                "properties": {
+                    "addressPrefix": "[parameters('VnetSettings').appsubnet.addressPrefix]",
+                    "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('appSubnetNSGName'))]"
+                        }
+                    }
+                },
+                 {
+                "name": "[parameters('VnetSettings').datasubnet.name]",
+                "properties": {
+                    "addressPrefix": "[parameters('VnetSettings').datasubnet.addressPrefix]",
+                    "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('dataSubnetNSGName'))]"
+                        }         
+                    }
+                },                
+                {                    
+                    "name": "[parameters('VnetSettings').storagesubnet.name]",
+                    "properties": {
+                        "addressPrefix": "[parameters('VnetSettings').storagesubnet.addressPrefix]",
+                        "networkSecurityGroup": {
+                            "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('storageSubnetNSGName'))]"
+                        }             
+                    }                    
+                }                    
+          ]
+        }             
+      },
+      {
+        "comments": "Network Interfaces",
+        "apiVersion": "2018-04-01",
+        "type": "Microsoft.Network/networkInterfaces",
+        "copy": {
+            "name": "nicloop",
+            "count": "[length(parameters('VirtualMachines'))]"
+        },
+        "name": "[concat(parameters('VirtualMachines')[copyIndex()].name,'-nic')]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+            "[concat('Microsoft.Network/virtualNetworks/', parameters('VnetSettings').name)]"
+        ],        
+        "properties": {
+            "ipConfigurations": [
+            {
+                "name": "ipconfig1",
+                "properties": {
+                "privateIPAllocationMethod": "Dynamic",
+                "subnet": {
+                    "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('VnetSettings').name, parameters('VirtualMachines')[copyIndex()].subnet)]"
+                    }                
+                }
+            }
+            ]
+        }
+      },    
+    {
+        "comments": "Virtual Machines with a single data disk",
+        "apiVersion": "2019-07-01",
+        "type": "Microsoft.Compute/virtualMachines",
+        "copy": {
+            "name": "vmloop",
+            "count": "[length(parameters('VirtualMachines'))]"
+        },
+        "name": "[parameters('VirtualMachines')[copyIndex()].name]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+            "nicloop",
+            "[concat(parameters('VirtualMachines')[copyIndex()].name,'-nic')]"            
+        ],        
+        "properties": {            
+            "hardwareProfile": {
+                "vmSize": "[parameters('VirtualMachines')[copyIndex()].size]"
+                },
+            "osProfile": {
+            "computerName": "[concat(parameters('VirtualMachines')[copyIndex()].name)]",
+            "adminUsername": "[parameters('adminUsername')]",
+            "adminPassword": "[parameters('adminpassword')]",            
+            "windowsConfiguration": "[if(bool(contains(toLower(parameters('VirtualMachines')[copyIndex()].image), 'windows')), variables('windowsConfiguration'), json('null'))]"
+            },
+            "storageProfile": {
+                "imageReference": "[variables('imageReference')[parameters('VirtualMachines')[copyIndex()].image]]",
+                "osDisk": {
+                    "caching": "ReadWrite",
+                    "createOption": "FromImage"
+                },
+                "dataDisks": [
+                {
+                    "name":"[parameters('VirtualMachines')[copyIndex()].datadisk.name]",
+                    "diskSizeGB": "[parameters('VirtualMachines')[copyIndex()].datadisk.sizegb]",
+                    "lun": 0,
+                    "createOption": "Empty",
+                    "managedDisk": {                        
+                        "storageAccountType": "[parameters('VirtualMachines')[copyIndex()].datadisk.sku]"
+                    }
+                }
+            ]                
+            },
+            "networkProfile": {
+            "networkInterfaces": [
+                {
+                "id": "[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('VirtualMachines')[copyIndex()].name, '-nic'))]"
+                }
+            ]
+            }
+        }
+    },
+    {
+        "comments": "Hana nic",
+        "apiVersion": "2018-04-01",
+        "type": "Microsoft.Network/networkInterfaces",        
+        "name": "[concat(parameters('HanaVM').name,'-nic')]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [
+            "[concat('Microsoft.Network/virtualNetworks/', parameters('VnetSettings').name)]"
+        ],        
+        "properties": {
+            "ipConfigurations": [
+            {
+                "name": "ipconfig1",
+                "properties": {
+                "privateIPAllocationMethod": "Dynamic",
+                "subnet": {
+                    "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('VnetSettings').name, parameters('HanaVM').subnet)]"
+                    }                
+                }
+            }
+            ]
+        }
+      },
+    {
+        "comments": "Hana VM",
+        "apiVersion": "2019-07-01",
+        "type": "Microsoft.Compute/virtualMachines",        
+        "name": "[parameters('HanaVM').name]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [            
+            "[concat(parameters('HanaVM').name,'-nic')]"            
+        ],        
+        "properties": {            
+            "hardwareProfile": {
+                "vmSize": "[parameters('HanaVM').size]"
+                },
+            "osProfile": {
+            "computerName": "[concat(parameters('HanaVM').name)]",
+            "adminUsername": "[parameters('adminUsername')]",
+            "adminPassword": "[parameters('adminpassword')]"            
+            },
+            "storageProfile": {
+                "imageReference": "[variables('imageReference')[parameters('HanaVM').image]]",
+                "osDisk": {
+                    "caching": "ReadWrite",
+                    "createOption": "FromImage"
+                },
+                "copy": [
+                    {
+                    "name": "dataDisks",
+                    "count": "[length(parameters('HanaVM').datadisks)]",
+                    "input": {
+                        "name":"[parameters('HanaVM').datadisks[copyIndex('dataDisks')].name]",
+                        "diskSizeGB": "[parameters('HanaVM').datadisks[copyIndex('dataDisks')].sizegb]",
+                        "lun": "[copyIndex('dataDisks')]",
+                        "createOption": "Empty",
+                        "managedDisk": {                        
+                            "storageAccountType": "[parameters('HanaVM').datadisks[copyIndex('dataDisks')].sku]"
+                        }
+                    }
+                    }
+                ]                             
+            },
+            "networkProfile": {
+            "networkInterfaces": [
+                {
+                "id": "[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('HanaVM').name, '-nic'))]"
+                }
+            ]
+            }
+        }
+    },
+      {
+            "comments": "Storage Account",
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2018-07-01",
+            "name": "[parameters('StorageSettings').accountName]",
+            "location": "[resourceGroup().location]",
+            "kind": "StorageV2",
+            "sku": {
+                "name": "Standard_LRS",
+                "tier": "Standard"
+            },
+            "properties": {
+                "accessTier": "Hot"
+            }
+      },
+      {
+          "comments": "File Share",
+            "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+            "apiVersion": "2019-06-01",
+            "name": "[concat(parameters('StorageSettings').accountName, '/default/', parameters('StorageSettings').fileShareName)]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('StorageSettings').accountName)]"
+            ]
+      }
+    ]
+  }
